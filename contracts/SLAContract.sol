@@ -1,58 +1,140 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.20;
 
-contract SLAContract {
-    struct SLA {
-        uint256 deliveryDeadline;
-        uint256 paymentDeadline;
-        uint256 requiredQuantity;
-        uint256 latePenalty;
-        uint256 shortagePenalty;
-        uint256 damagePenalty;
-        uint256 paymentDelayPenalty;
-        bool active;
+import "@openzeppelin/contracts/access/AccessControl.sol";
+
+contract SLAContract is AccessControl {
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
+
+    enum DisputeType {
+        LateDelivery,
+        Shortage,
+        Damage,
+        DeliveryDenial,
+        PaymentDelay
     }
 
-    uint256 public slaCounter;
-    mapping(uint256 => SLA) public slas;
+    enum Operator {
+        GreaterThan,
+        LessThan,
+        Equal,
+        NotEqual
+    }
 
-    event SLACreated(uint256 indexed slaId);
+    // Three-state evaluation result. NotEvaluable distinguishes "no measurement
+    // has been written yet" from a genuine "measured value shows no breach".
+    enum EvalStatus {
+        NotEvaluable,
+        NoBreach,
+        Breach
+    }
+
+    struct Clause {
+        DisputeType disputeType;
+        Operator operator;
+        uint256 threshold;
+        uint256 penaltyBps; // 10000 = 100%
+    }
+
+    struct SLA {
+        address buyer;
+        address seller;
+        uint256 escrowValue;
+        bool isActive;
+        mapping(uint256 => Clause) clauses;
+        uint256 clauseCount;
+    }
+
+    mapping(uint256 => SLA) public slas;
+    uint256 public slaCounter;
+
+    // slaId => clauseId => measuredValue
+    mapping(uint256 => mapping(uint256 => uint256)) public measuredValues;
+    mapping(uint256 => mapping(uint256 => bool)) public valueMeasured;
+
+    event SLACreated(uint256 indexed slaId, address indexed buyer, address indexed seller, uint256 escrowValue);
+    event ClauseAdded(uint256 indexed slaId, uint256 indexed clauseId, DisputeType disputeType);
+    event ValueUpdated(uint256 indexed slaId, uint256 indexed clauseId, uint256 measuredValue);
+
+    constructor() {
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(ADMIN_ROLE, msg.sender);
+        _grantRole(ORACLE_ROLE, msg.sender);
+    }
 
     function createSLA(
-        uint256 _deliveryDeadline,
-        uint256 _paymentDeadline,
-        uint256 _requiredQuantity,
-        uint256 _latePenalty,
-        uint256 _shortagePenalty,
-        uint256 _damagePenalty,
-        uint256 _paymentDelayPenalty
-    ) external returns (uint256) {
-        slaCounter++;
+        address _buyer,
+        address _seller,
+        uint256 _escrowValue,
+        Clause[] memory _clauses
+    ) external onlyRole(ADMIN_ROLE) returns (uint256) {
+        uint256 slaId = ++slaCounter;
+        SLA storage newSLA = slas[slaId];
+        newSLA.buyer = _buyer;
+        newSLA.seller = _seller;
+        newSLA.escrowValue = _escrowValue;
+        newSLA.isActive = true;
 
-        slas[slaCounter] = SLA({
-            deliveryDeadline: _deliveryDeadline,
-            paymentDeadline: _paymentDeadline,
-            requiredQuantity: _requiredQuantity,
-            latePenalty: _latePenalty,
-            shortagePenalty: _shortagePenalty,
-            damagePenalty: _damagePenalty,
-            paymentDelayPenalty: _paymentDelayPenalty,
-            active: true
-        });
+        for (uint256 i = 0; i < _clauses.length; i++) {
+            newSLA.clauses[i] = _clauses[i];
+            emit ClauseAdded(slaId, i, _clauses[i].disputeType);
+        }
+        newSLA.clauseCount = _clauses.length;
 
-        emit SLACreated(slaCounter);
-        return slaCounter;
+        emit SLACreated(slaId, _buyer, _seller, _escrowValue);
+        return slaId;
     }
 
-    function checkLateDelivery(uint256 _slaId, uint256 _deliveryTime) external view returns (bool) {
-        return _deliveryTime > slas[_slaId].deliveryDeadline;
+    function updateMeasuredValue(uint256 _slaId, uint256 _clauseId, uint256 _measuredValue) external onlyRole(ORACLE_ROLE) {
+        require(slas[_slaId].isActive, "SLA not active");
+        require(_clauseId < slas[_slaId].clauseCount, "Invalid clauseId");
+
+        measuredValues[_slaId][_clauseId] = _measuredValue;
+        valueMeasured[_slaId][_clauseId] = true;
+
+        emit ValueUpdated(_slaId, _clauseId, _measuredValue);
     }
 
-    function checkShortage(uint256 _slaId, uint256 _deliveredQuantity) external view returns (bool) {
-        return _deliveredQuantity < slas[_slaId].requiredQuantity;
+    function evaluateClause(uint256 _slaId, uint256 _clauseId) external view returns (EvalStatus status, uint256 penaltyAmount) {
+        require(slas[_slaId].isActive, "SLA not active");
+        require(_clauseId < slas[_slaId].clauseCount, "Invalid clauseId");
+
+        // Distinguish "not measured yet" from "measured, no breach". A clause
+        // with no oracle measurement is NotEvaluable and must not silently
+        // resolve to NoBreach (which would favour the breaching party).
+        if (!valueMeasured[_slaId][_clauseId]) {
+            return (EvalStatus.NotEvaluable, 0);
+        }
+
+        SLA storage sla = slas[_slaId];
+        Clause storage clause = sla.clauses[_clauseId];
+        uint256 measuredValue = measuredValues[_slaId][_clauseId];
+
+        bool isBreach = false;
+        if (clause.operator == Operator.GreaterThan) {
+            isBreach = measuredValue > clause.threshold;
+        } else if (clause.operator == Operator.LessThan) {
+            isBreach = measuredValue < clause.threshold;
+        } else if (clause.operator == Operator.Equal) {
+            isBreach = measuredValue == clause.threshold;
+        } else if (clause.operator == Operator.NotEqual) {
+            isBreach = measuredValue != clause.threshold;
+        }
+
+        if (isBreach) {
+            return (EvalStatus.Breach, (sla.escrowValue * clause.penaltyBps) / 10000);
+        }
+        return (EvalStatus.NoBreach, 0);
     }
 
-    function checkPaymentDelay(uint256 _slaId, uint256 _paymentTime) external view returns (bool) {
-        return _paymentTime > slas[_slaId].paymentDeadline;
+    function getClause(uint256 _slaId, uint256 _clauseId) external view returns (
+        DisputeType disputeType,
+        Operator operator,
+        uint256 threshold,
+        uint256 penaltyBps
+    ) {
+        Clause storage c = slas[_slaId].clauses[_clauseId];
+        return (c.disputeType, c.operator, c.threshold, c.penaltyBps);
     }
 }

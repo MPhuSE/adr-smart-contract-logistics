@@ -1,0 +1,33 @@
+{
+  "seed": 7,
+  "reps": 1000,
+  "samplesPerRep": 1000,
+  "tier2Jury": {
+    "label": "Tier 2 jury",
+    "size": 3,
+    "pHonest": 0.8,
+    "reps": 1000,
+    "samplesPerRep": 1000,
+    "observedMean": 89.63,
+    "ci95": [
+      89.57,
+      89.69
+    ],
+    "theoretical": 89.6,
+    "theoreticalInsideCI": true
+  },
+  "tier3Expert": {
+    "label": "Tier 3 expert panel",
+    "size": 5,
+    "pHonest": 0.9,
+    "reps": 1000,
+    "samplesPerRep": 1000,
+    "observedMean": 99.13,
+    "ci95": [
+      99.11,
+      99.15
+    ],
+    "theoretical": 99.14,
+    "theoreticalInsideCI": true
+  }
+}
