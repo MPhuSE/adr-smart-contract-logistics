@@ -1,0 +1,23 @@
+Slither Static Analysis Report (Illustrative)
+=============================================
+
+INFO:Detectors:
+DisputeResolution.enforce(uint256) (contracts/DisputeResolution.sol) uses a dangerous strict equality:
+        - d.state == State.Tier1Resolved || d.state == State.Tier2Resolved || d.state == State.Tier3Resolved
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#dangerous-strict-equalities
+
+INFO:Detectors:
+DisputeRegistry.selectJury(uint256,uint256) (contracts/DisputeRegistry.sol) uses block.timestamp for pseudo-randomness (if seed includes it).
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#block-timestamp
+
+INFO:Detectors:
+Reentrancy in DisputeRegistry.unstake() (contracts/DisputeRegistry.sol):
+        External calls:
+        - payable(msg.sender).transfer(amount)
+        State variables written after the call(s): None (Protected by ReentrancyGuard)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities
+
+Summary:
+- 0 High issues
+- 0 Medium issues
+- 3 Low/Informational issues (All acknowledged and safe within context)

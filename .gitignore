@@ -15,3 +15,11 @@ node_modules
 
 # Hardhat Ignition default folder for deployments against a local node
 ignition/deployments/chain-31337
+
+# Python tooling for figure/manuscript generation
+venv/
+scripts/__pycache__/
+*.pyc
+
+# Generated manuscript (regenerated from results/ by the python scripts)
+*.docx
