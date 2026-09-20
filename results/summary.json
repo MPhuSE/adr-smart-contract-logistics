@@ -1,10 +1,20 @@
 {
   "seed": 42,
+  "schemaVersion": 2,
   "params": {
     "numDisputes": 1000,
     "pArbHonest": 0.8,
     "pExpHonest": 0.9,
-    "pAppeal": 0.4
+    "pAppeal": 0.4,
+    "typeProbabilities": [
+      0.3,
+      0.2,
+      0.2,
+      0.15,
+      0.15
+    ],
+    "arbitratorPoolSize": 10,
+    "expertPoolSize": 6
   },
   "totalDisputes": 1000,
   "routing": {
@@ -22,7 +32,15 @@
     },
     "note": "Routing is determined by a fixed type->tier map plus genuine appeals; Tier 1/2 shares restate the input type distribution, Tier 3 share is emergent from appeals."
   },
-  "appealRate": 15.1,
+  "appeals": {
+    "nEligible": 379,
+    "nAppealed": 151,
+    "conditionalRate": 39.8,
+    "overallShare": 15.1,
+    "note": "conditionalRate uses all Tier 2 jury rulings as the denominator; overallShare uses all disputes."
+  },
+  "appealRate": 39.8,
+  "overallAppealShare": 15.1,
   "correctness": {
     "overall": {
       "rate": 97.5,
@@ -114,6 +132,22 @@
     },
     "note": "meanTotalGas = open + resolve + enforce gas summed over the full on-chain path of disputes whose terminal tier is the key. Tier 3 includes its Tier 2 phase + appeal, so Tier3 >= Tier2 by construction."
   },
+  "gasAccounting": {
+    "includedInPerCase": [
+      "createDispute",
+      "submitEvidence",
+      "resolveTier1 or voting path",
+      "enforce"
+    ],
+    "excludedFromPerCase": [
+      "deployments",
+      "role grants",
+      "updateMeasuredValue",
+      "createSLA",
+      "voter registration"
+    ],
+    "note": "transitionToReveal is included in resolveGas and is also recorded separately in gas-report.csv from schemaVersion 2 onward."
+  },
   "configuredWindows": {
     "tier1Minutes": 0,
     "tier2Minutes": 2880,
@@ -122,6 +156,6 @@
   },
   "slashing": {
     "nonRevealSlash": 0,
-    "note": "Minority good-faith voters are not slashed (herding-incentive avoidance). Slashing applies only to non-revelation; under the honest-majority model all voters reveal, so no slashing events occur in this run. Non-reveal slashing is covered by the unit test suite."
+    "note": "Minority voters are not slashed. This choice alone does not establish incentive compatibility or eliminate herding. Slashing applies only to non-revelation; under the independent-vote model all voters reveal, so no slashing events occur in this run."
   }
 }
