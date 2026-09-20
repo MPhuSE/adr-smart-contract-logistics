@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "npx hardhat test",
-    "compile": "npx hardhat compile"
+    "compile": "npx hardhat compile",
+    "simulate": "npx hardhat run scripts/runSimulation.js",
+    "analyze": "node scripts/analyzeResults.js",
+    "replicate": "node scripts/replicate.js"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.0"

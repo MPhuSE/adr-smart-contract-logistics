@@ -61,8 +61,9 @@ def title_page(doc, summary):
         "Scope statement. This is a prototype/artifact study evaluated on a local Hardhat network. "
         "It does not claim production deployment, public-testnet validation, formal verification, an "
         "independent audit, or complete on-chain financial settlement. Every quantitative result comes "
-        "from a single seeded simulation (seed = %s); the seed and parameters are reported so the run "
-        "is exactly reproducible." % summary.get("seed", "n/a"),
+        "from one seeded contract execution (seed = %s), supplemented by a separate off-chain voting-model "
+        "replication; the seeds and parameters are reported so both analyses can be reproduced. "
+        "Neither analysis measures real adjudicators." % summary.get("seed", "n/a"),
         size=10,
     )
     doc.add_page_break()
@@ -88,6 +89,12 @@ def build_publication_doc(rows, summary, gas_rows, stats):
     params = summary["params"]
     seed = summary.get("seed", "n/a")
     n = summary["totalDisputes"]
+    appeals = summary.get("appeals", {
+        "nEligible": t2["n"],
+        "nAppealed": routing["tier3"]["n"],
+        "conditionalRate": summary.get("appealRate", 0),
+        "overallShare": summary.get("overallAppealShare", routing["tier3"]["rate"]),
+    })
 
     def ci(node):
         return f"[{node['ci95'][0]:.1f}, {node['ci95'][1]:.1f}]%"
@@ -110,8 +117,9 @@ def build_publication_doc(rows, summary, gas_rows, stats):
         "prototype with a single seeded Hardhat run of "
         f"{n:,} synthetic disputes (seed = {seed}). Routing was "
         f"{pct(routing['tier1']['rate'])} Tier 1, {pct(routing['tier2']['rate'])} Tier 2, and "
-        f"{pct(routing['tier3']['rate'])} Tier 3, the Tier 3 share emerging from "
-        f"{pct(summary['appealRate'])} of cases being appealed. We deliberately do not headline a single "
+        f"{pct(routing['tier3']['rate'])} Tier 3. Of {appeals['nEligible']} jury rulings, "
+        f"{appeals['nAppealed']} were appealed ({pct(appeals['conditionalRate'])}); appealed cases were "
+        f"{pct(appeals['overallShare'])} of all disputes. We deliberately do not headline a single "
         "aggregate accuracy number: Tier 1 correctness is deterministic by construction and therefore a "
         "mechanism check, not adjudication quality. The informative result is the stochastic jury: "
         f"observed Tier 2 correctness was {t2['observedRate']:.1f}% (95% CI {ci(t2)}), statistically "
@@ -155,9 +163,10 @@ def build_publication_doc(rows, summary, gas_rows, stats):
     paragraph(
         doc,
         "We are explicit about what this paper is. It is a prototype and artifact study, not a deployable "
-        "system. Every number below comes from one seeded local simulation, reported with its seed, "
-        "parameters, and — where the quantity is stochastic — a confidence interval and the "
-        "closed-form value it should match. We describe the mechanism honestly, including the parts that "
+        "system. Transaction and routing measurements come from one seeded local execution. A separate "
+        "off-chain Monte Carlo experiment estimates the mean of the independent-vote model. We report "
+        "seeds, parameters, confidence intervals, and the closed-form comparator. We describe the mechanism "
+        "honestly, including the parts that "
         "are deterministic by construction and therefore carry no empirical weight."
     )
     doc.add_heading("1.1 Research Questions", level=2)
@@ -169,7 +178,7 @@ def build_publication_doc(rows, summary, gas_rows, stats):
     add_bullet(doc, "An implementation-faithful four-contract architecture for tiered logistics dispute resolution, described as built rather than as idealised.")
     add_bullet(doc, "A typed SLA clause model covering the five dispute classes present in the Solidity enum, with a three-state clause evaluation (BREACH / NO_BREACH / NOT_EVALUABLE).")
     add_bullet(doc, "A lifecycle in which Tier 3 is reached only through a genuine, bonded appeal of a Tier 2 ruling, so the appeal path and expert panel are actually exercised under stochastic voting rather than forced to ground truth.")
-    add_bullet(doc, "A seeded, reproducible evaluation that separates deterministic mechanism checks from the one stochastic quantity of interest, reports the latter with a confidence interval, and validates it against a closed-form binomial baseline.")
+    add_bullet(doc, "A seeded, reproducible evaluation that separates deterministic mechanism checks from jury and expert correctness, reports confidence intervals, and checks both against closed-form binomial baselines.")
     add_bullet(doc, "An adversary-oriented security analysis identifying the trust, authorization, and settlement gaps between this prototype and a deployable system.")
 
     # -------------------------------------------------------------- Related work
@@ -189,8 +198,8 @@ def build_publication_doc(rows, summary, gas_rows, stats):
         "juror selection, voting, appeals, and slashing. Kleros uses a Schelling-point design in which "
         "jurors are rewarded for coherence with the majority; Aragon Court used staked jurors drawn by "
         "stake-weighted sortition with an appeal/escalation ladder. Both are general-purpose courts. SLA "
-        "smart contracts in cloud and IoT settings take the opposite, fully-deterministic stance: a "
-        "measured metric directly triggers a penalty. Our prototype sits between these: it is "
+        "SLA research includes metric-triggered enforcement as well as witness-based verification. Our "
+        "prototype is "
         "domain-specific to logistics, deterministic where a clause is measurable, and staked-human only "
         "where it is not. Table I positions it against these reference points."
     )
@@ -200,7 +209,7 @@ def build_publication_doc(rows, summary, gas_rows, stats):
         [
             ["Kleros", "General court", "Schelling-point jury, coherence incentive", "Stake-weighted draw", "Multi-round, escalating fee", "Deployed network (external)"],
             ["Aragon Court", "General court", "Staked jurors, majority ruling", "Stake-weighted sortition", "Appeal to larger panel", "Deployed network (external)"],
-            ["SLA-penalty contracts", "Cloud / IoT", "None (fully deterministic)", "N/A", "N/A", "Metric-triggered penalty"],
+            ["SLA mechanisms", "Cloud / IoT", "Metric monitoring or witness-based verification", "Mechanism-dependent", "N/A", "Research designs"],
             ["This prototype", "Logistics", "3-member staked jury, commit-reveal", "Deterministic modular index (prototype)", "Bonded appeal to 5 experts", "Seeded local simulation"],
         ],
         [1.05, 0.95, 1.55, 1.25, 1.1, 1.2],
@@ -208,9 +217,10 @@ def build_publication_doc(rows, summary, gas_rows, stats):
     add_caption(doc, "Table I. Positioning relative to representative arbitration and SLA-penalty systems.")
     paragraph(
         doc,
-        "The novelty claimed here is modest and specific: a logistics-scoped tiering that pays for human "
+        "The contribution claimed here is modest and specific: a logistics-scoped integration that pays for human "
         "review only on the subset of clauses that cannot be measured, packaged as a reproducible "
-        "artifact. We do not claim a new incentive mechanism; indeed our jury selection is weaker than "
+        "artifact. We do not claim a new incentive mechanism, priority over every hybrid system, or a "
+        "demonstrated cost advantage; indeed our jury selection is weaker than "
         "the deployed systems above, and we say so."
     )
 
@@ -384,9 +394,8 @@ Tier2Resolved / Tier3Resolved -> enforce -> Enforced
         doc,
         f"Reproducibility. All randomness in runSimulation.js comes from a seeded mulberry32 generator; "
         f"re-running with the same seed (default {seed}) reproduces the run exactly. The script also "
-        "records the seed and the honesty/appeal parameters into summary.json. The obsolete default Lock "
-        "test that previously shipped with the template has been removed, so the full test suite runs "
-        "clean."
+        "records the seed, type probabilities, pool sizes, and voting/appeal parameters into summary.json. "
+        "The repository contains functional and invariant tests; these are not an independent security audit."
     )
 
     # ------------------------------------------------------- Methodology
@@ -395,9 +404,11 @@ Tier2Resolved / Tier3Resolved -> enforce -> Enforced
         doc,
         "The evaluation is a seeded synthetic experiment on a local Hardhat network. It is not a "
         "public-chain deployment and does not measure real human adjudicators. The simulation deploys the "
-        "contracts, registers ten arbitrators and eight experts, creates one SLA with a clause per type, "
+        f"contracts, registers {params.get('arbitratorPoolSize', 10)} arbitrators and "
+        f"{params.get('expertPoolSize', 6)} experts, creates one shared SLA with a clause per type, "
         f"and generates {n:,} disputes from a seeded PRNG. For each dispute a ground-truth winner is "
-        "drawn. Objective types receive an oracle measurement consistent with that winner, so Tier 1 is "
+        f"drawn from type probabilities {params.get('typeProbabilities', [0.30, 0.20, 0.20, 0.15, 0.15])}. "
+        "Objective types receive an oracle measurement consistent with that winner, so Tier 1 is "
         "deterministic; its correctness is a mechanism check, not adjudication quality. Subjective types "
         f"go to the jury, where each juror votes honestly with probability "
         f"{params['pArbHonest']:.0%} and the on-chain tally decides. A losing party appeals with "
@@ -411,10 +422,10 @@ Tier2Resolved / Tier3Resolved -> enforce -> Enforced
         "tallies committed votes, their statistical behaviour is fully determined by the off-chain "
         "honesty draws, so we obtain confidence intervals two ways. The single on-chain run gives a "
         "Wilson 95% interval on the observed proportion (Section 8). Independently, scripts/replicate.js "
-        "runs the voting process off-chain across many replications (1,000 replications of 1,000 panels "
-        "by default) to give a mean +/- 95% interval, and both are compared to the closed-form majority "
+        "runs only the independent voting process off-chain across many replications (1,000 replications "
+        "of 1,000 panels by default) to estimate the model mean, and both are compared to the closed-form majority "
         "probability P(correct) = sum_{k>n/2} C(n,k) p^k (1-p)^{n-k}. This is what gives the correctness "
-        "numbers statistical meaning; the blockchain adds no randomness beyond these votes."
+        "numbers a model-based comparator. It does not replicate routing, gas, oracle updates, appeals, or contract execution."
     )
     paragraph(
         doc,
@@ -422,7 +433,8 @@ Tier2Resolved / Tier3Resolved -> enforce -> Enforced
         "transaction receipts (Table VII). Per-tier totals sum the open + resolve + enforce gas over the "
         "complete on-chain path of a dispute whose terminal tier is the row label; by construction a "
         "Tier 3 dispute includes its Tier 2 phase plus the appeal, so Tier 3 >= Tier 2. We report gas in "
-        "gas units only. We do not convert to fiat: the prototype targets an L2 rather than L1 mainnet, "
+        "These totals exclude deployment, role grants, oracle measurement updates, SLA creation, and voter "
+        "registration; they are not full lifecycle costs. We report gas units only. We do not convert to fiat: the prototype targets an L2 rather than L1 mainnet, "
         "and a single L1 gas-price assumption would imply a precision the artifact does not have."
     )
 
@@ -450,8 +462,9 @@ Tier2Resolved / Tier3Resolved -> enforce -> Enforced
         "We are explicit that routing is only partly emergent. The Tier 1 and Tier 2 shares restate the "
         "input type distribution through a fixed type-to-tier map: a measurable type always reaches Tier 1, "
         "a subjective type always reaches Tier 2. No case escalates because evidence was contested. The "
-        f"genuinely emergent quantity is the Tier 3 share ({pct(routing['tier3']['rate'])}), which is "
-        f"produced by the {pct(summary['appealRate'])} appeal rate acting on Tier 2 rulings. The "
+        f"genuinely emergent quantity is the Tier 3 share ({pct(routing['tier3']['rate'])}). "
+        f"The conditional appeal rate is {appeals['nAppealed']}/{appeals['nEligible']} = "
+        f"{pct(appeals['conditionalRate'])}; the overall appealed share is {pct(appeals['overallShare'])}. The "
         "“configured window” column is the sum of the protocol’s commit/reveal windows, a "
         "constant of the design, not a measured wall-clock latency; Hardhat advances time programmatically, "
         "so no real latency is observed."
@@ -481,8 +494,8 @@ Tier2Resolved / Tier3Resolved -> enforce -> Enforced
         "the mechanism tallies votes correctly. This is the right claim to make — a sanity check that "
         "the on-chain mechanism behaves as the model says — not a discovery about adjudication "
         f"accuracy. The appealed expert panel observed {t3['observedRate']:.1f}% over n = {t3['n']} cases "
-        f"against a theoretical {t3['theoreticalRate']:.1f}%; the interval is wider because appeals are a "
-        "minority of disputes, and we report n so the reader can see the precision the sample supports. "
+        f"against a theoretical {t3['theoreticalRate']:.1f}%. An all-correct sample does not establish "
+        "perfect expert reliability, and we report n so the reader can see the precision the sample supports. "
         "The objective tiers are deterministic and contribute no information about accuracy, which is why "
         "we do not fold everything into one headline percentage."
     )
@@ -491,7 +504,7 @@ Tier2Resolved / Tier3Resolved -> enforce -> Enforced
     add_picture(
         doc,
         FIGURES_DIR / "operation_gas.png",
-        "Figure 4. Average gas by measured contract operation (gas units).",
+        "Figure 4. Average gas by every separately recorded contract operation (gas units).",
     )
     add_table(
         doc,
@@ -502,12 +515,13 @@ Tier2Resolved / Tier3Resolved -> enforce -> Enforced
     add_caption(doc, "Table VII. Per-operation average gas from transaction receipts, with call counts (the denominator).")
     paragraph(
         doc,
-        "Per-operation gas is the more trustworthy view because its denominator is explicit. The per-tier "
+        "Per-operation gas has an explicit denominator. transitionToReveal is recorded separately in "
+        "schema version 2 while remaining included in each path's resolveGas. The per-tier "
         "totals in Table V are internally consistent — Tier 3 exceeds Tier 2 because a Tier 3 path "
         "contains the Tier 2 phase plus the appeal and a second voting round — which resolves the "
         "counter-intuitive inversion present in the earlier artifact, where Tier 3 was under-counted. We "
-        "give no fiat figure; on an L2 the dominant real cost would be data availability, which this "
-        "local experiment does not model."
+        "give no percentage saving or external-arbitration superiority claim because no matched baseline "
+        "was executed. The local experiment also omits public-network and L2 data-availability fees."
     )
 
     # ------------------------------------------------------- Security
@@ -528,7 +542,7 @@ Tier2Resolved / Tier3Resolved -> enforce -> Enforced
         [
             ["Safety", "Enum state machine; representative-path and invariant tests", "No exhaustive model checking or conservation-of-funds invariant."],
             ["Liveness", "Bounded commit/reveal windows; non-reveal slashing", "Owner pause can block enforcement; no keeper/timeout for a stalled appeal."],
-            ["Fairness", "Commit-reveal hides votes; no minority slashing (no herding); reward for coherence", "Deterministic, predictable selection enables targeted juror grinding."],
+            ["Fairness", "Commit-reveal protocol; no minority slashing; reward for coherence", "Predictable selection; no incentive-compatibility proof; synthetic run uses a fixed shared salt."],
             ["Integrity", "Evidence hash-equality check", "No off-chain availability, authenticity, or privacy guarantee."],
         ],
         [0.95, 2.55, 2.55],
@@ -610,7 +624,7 @@ Tier2Resolved / Tier3Resolved -> enforce -> Enforced
         '[4] N. Kshetri, "Blockchain\'s roles in meeting key supply chain management objectives," Int. J. Information Management, vol. 39, pp. 80-89, 2018.',
         '[5] K. Wuest and A. Gervais, "Do You Need a Blockchain?" Proc. Crypto Valley Conf. on Blockchain Technology, pp. 45-54, 2018.',
         '[6] C. Lesaege, F. Ast, and W. George, "Kleros Short Paper v1.0.7," 2019.',
-        '[7] J. Cuende and L. Cuende, "Aragon Court," Aragon Association technical documentation, 2020.',
+        '[7] Aragon, "Aragon Court," technical documentation, 2020.',
         '[8] R. B. Uriarte, R. De Nicola, and K. Kritikos, "Towards distributed SLA management with smart contracts and blockchain," Proc. IEEE CloudCom, pp. 266-271, 2018.',
         '[9] H. Zhou et al., "A blockchain based witness model for trustworthy cloud service level agreement enforcement," Proc. IEEE INFOCOM, pp. 1567-1575, 2019.',
         '[10] N. Atzei, M. Bartoletti, and T. Cimoli, "A survey of attacks on Ethereum smart contracts," POST, 2017.',

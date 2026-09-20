@@ -36,6 +36,26 @@ const NUM_DISPUTES = parseInt(process.env.NUM_DISPUTES || "1000", 10);
 const P_ARB_HONEST = parseFloat(process.env.P_ARB_HONEST || "0.8"); // jury honesty
 const P_EXP_HONEST = parseFloat(process.env.P_EXP_HONEST || "0.9"); // expert honesty
 const P_APPEAL = parseFloat(process.env.P_APPEAL || "0.4"); // P(losing party appeals a Tier 2 ruling)
+const ARBITRATOR_POOL_SIZE = parseInt(process.env.ARBITRATOR_POOL_SIZE || "10", 10);
+const EXPERT_POOL_SIZE = parseInt(process.env.EXPERT_POOL_SIZE || "6", 10);
+
+function validateParameters() {
+    const probabilities = { P_ARB_HONEST, P_EXP_HONEST, P_APPEAL };
+    for (const [name, value] of Object.entries(probabilities)) {
+        if (!Number.isFinite(value) || value < 0 || value > 1) {
+            throw new Error(`${name} must be a number in [0, 1]; received ${value}`);
+        }
+    }
+    if (!Number.isInteger(SEED) || !Number.isInteger(NUM_DISPUTES) || NUM_DISPUTES <= 0) {
+        throw new Error("SEED must be an integer and NUM_DISPUTES must be a positive integer.");
+    }
+    if (!Number.isInteger(ARBITRATOR_POOL_SIZE) || ARBITRATOR_POOL_SIZE < 3) {
+        throw new Error("ARBITRATOR_POOL_SIZE must be an integer >= 3.");
+    }
+    if (!Number.isInteger(EXPERT_POOL_SIZE) || EXPERT_POOL_SIZE < 5) {
+        throw new Error("EXPERT_POOL_SIZE must be an integer >= 5.");
+    }
+}
 
 const rng = mulberry32(SEED);
 const flip = (p) => rng() < p;
@@ -69,6 +89,7 @@ function majorityCorrect(n, p) {
 }
 
 async function main() {
+    validateParameters();
     console.log(`Starting simulation: SEED=${SEED}, N=${NUM_DISPUTES}, ` +
         `P_ARB_HONEST=${P_ARB_HONEST}, P_EXP_HONEST=${P_EXP_HONEST}, P_APPEAL=${P_APPEAL}`);
 
@@ -102,11 +123,20 @@ async function main() {
     await slaContract.grantRole(await slaContract.ORACLE_ROLE(), oracle.address);
     await registry.grantRole(await registry.RESOLUTION_ROLE(), await resolution.getAddress());
 
-    // Register staked voters: 10 arbitrators, 8 experts.
+    // Register staked voters. Hardhat's default 20 accounts leave 16 accounts
+    // after owner/buyer/seller/oracle; the reproducible default is therefore
+    // 10 arbitrators + 6 experts. Keep these sizes explicit and fail early if
+    // a custom network exposes too few signers.
     const ARBITRATOR_STAKE = ethers.parseEther("1");
     const EXPERT_STAKE = ethers.parseEther("2");
-    const arbitrators = others.slice(0, 10);
-    const experts = others.slice(10, 18);
+    if (others.length < ARBITRATOR_POOL_SIZE + EXPERT_POOL_SIZE) {
+        throw new Error(
+            `Need ${ARBITRATOR_POOL_SIZE + EXPERT_POOL_SIZE} voter signers after the four role accounts, ` +
+            `but only ${others.length} are available.`
+        );
+    }
+    const arbitrators = others.slice(0, ARBITRATOR_POOL_SIZE);
+    const experts = others.slice(ARBITRATOR_POOL_SIZE, ARBITRATOR_POOL_SIZE + EXPERT_POOL_SIZE);
     for (const arb of arbitrators) {
         const rc = await (await registry.connect(arb).registerArbitrator({ value: ARBITRATOR_STAKE })).wait();
         trackGas("registerArbitrator", rc.gasUsed);
@@ -171,7 +201,9 @@ async function main() {
         }
         await hre.network.provider.send("evm_increaseTime", [86401]);
         await hre.network.provider.send("evm_mine");
-        addGas((await (await resolution.transitionToReveal(disputeId)).wait()).gasUsed);
+        const transitionRc = await (await resolution.transitionToReveal(disputeId)).wait();
+        addGas(transitionRc.gasUsed);
+        trackGas("transitionToReveal", transitionRc.gasUsed);
 
         for (let j = 0; j < voters.length; j++) {
             const rc = await (await resolution.connect(voters[j]).revealVote(disputeId, votes[j], salt)).wait();
@@ -314,7 +346,16 @@ async function main() {
 
     const summary = {
         seed: SEED,
-        params: { numDisputes: NUM_DISPUTES, pArbHonest: P_ARB_HONEST, pExpHonest: P_EXP_HONEST, pAppeal: P_APPEAL },
+        schemaVersion: 2,
+        params: {
+            numDisputes: NUM_DISPUTES,
+            pArbHonest: P_ARB_HONEST,
+            pExpHonest: P_EXP_HONEST,
+            pAppeal: P_APPEAL,
+            typeProbabilities: [0.30, 0.20, 0.20, 0.15, 0.15],
+            arbitratorPoolSize: arbitrators.length,
+            expertPoolSize: experts.length,
+        },
         totalDisputes: NUM_DISPUTES,
         routing: {
             tier1: { n: byTier[1].length, rate: +(byTier[1].length / NUM_DISPUTES * 100).toFixed(1) },
@@ -322,7 +363,17 @@ async function main() {
             tier3: { n: byTier[3].length, rate: +(byTier[3].length / NUM_DISPUTES * 100).toFixed(1) },
             note: "Routing is determined by a fixed type->tier map plus genuine appeals; Tier 1/2 shares restate the input type distribution, Tier 3 share is emergent from appeals.",
         },
-        appealRate: +(appealCount / NUM_DISPUTES * 100).toFixed(1),
+        appeals: {
+            nEligible: juryRows.length,
+            nAppealed: appealCount,
+            conditionalRate: +(juryRows.length ? appealCount / juryRows.length * 100 : 0).toFixed(1),
+            overallShare: +(appealCount / NUM_DISPUTES * 100).toFixed(1),
+            note: "conditionalRate uses all Tier 2 jury rulings as the denominator; overallShare uses all disputes.",
+        },
+        // Backward-compatible alias. This is now the scientifically relevant
+        // conditional rate, not the appealed share of all disputes.
+        appealRate: +(juryRows.length ? appealCount / juryRows.length * 100 : 0).toFixed(1),
+        overallAppealShare: +(appealCount / NUM_DISPUTES * 100).toFixed(1),
         correctness: {
             overall: { rate: +(rate(results) * 100).toFixed(1), n: results.length, correct: nCorrect(results) },
             note: "Tier 1 is deterministic (mechanism check, not adjudication accuracy). Only Tier 2/Tier 3 are stochastic.",
@@ -347,13 +398,18 @@ async function main() {
             3: { meanTotalGas: Math.round(meanGas(byTier[3])), n: byTier[3].length },
             note: "meanTotalGas = open + resolve + enforce gas summed over the full on-chain path of disputes whose terminal tier is the key. Tier 3 includes its Tier 2 phase + appeal, so Tier3 >= Tier2 by construction.",
         },
+        gasAccounting: {
+            includedInPerCase: ["createDispute", "submitEvidence", "resolveTier1 or voting path", "enforce"],
+            excludedFromPerCase: ["deployments", "role grants", "updateMeasuredValue", "createSLA", "voter registration"],
+            note: "transitionToReveal is included in resolveGas and is also recorded separately in gas-report.csv from schemaVersion 2 onward.",
+        },
         configuredWindows: {
             tier1Minutes: TIER_WINDOW_MIN[1], tier2Minutes: TIER_WINDOW_MIN[2], tier3Minutes: TIER_WINDOW_MIN[3],
             note: "Sum of configured commit/reveal windows (protocol constants), NOT measured wall-clock latency.",
         },
         slashing: {
             nonRevealSlash: 0,
-            note: "Minority good-faith voters are not slashed (herding-incentive avoidance). Slashing applies only to non-revelation; under the honest-majority model all voters reveal, so no slashing events occur in this run. Non-reveal slashing is covered by the unit test suite.",
+            note: "Minority voters are not slashed. This choice alone does not establish incentive compatibility or eliminate herding. Slashing applies only to non-revelation; under the independent-vote model all voters reveal, so no slashing events occur in this run.",
         },
     };
 
@@ -370,7 +426,8 @@ async function main() {
     console.log("results/gas-report.csv written");
 
     console.log("\nDone.");
-    console.log(`Tier routing: T1=${summary.routing.tier1.rate}%  T2=${summary.routing.tier2.rate}%  T3=${summary.routing.tier3.rate}%  (appealRate=${summary.appealRate}%)`);
+    console.log(`Tier routing: T1=${summary.routing.tier1.rate}%  T2=${summary.routing.tier2.rate}%  T3=${summary.routing.tier3.rate}%`);
+    console.log(`Appeals: ${summary.appeals.nAppealed}/${summary.appeals.nEligible} jury rulings (${summary.appeals.conditionalRate}%); ${summary.appeals.overallShare}% of all disputes`);
     console.log(`Tier 2 jury correctness: observed ${summary.correctness.tier2Jury.observedRate}% (95% CI ${summary.correctness.tier2Jury.ci95.join("-")}%), theoretical ${summary.correctness.tier2Jury.theoreticalRate}%`);
     console.log(`Tier 3 expert correctness: observed ${summary.correctness.tier3Expert.observedRate}% (n=${summary.correctness.tier3Expert.n}), theoretical ${summary.correctness.tier3Expert.theoreticalRate}%`);
 }

@@ -17,7 +17,14 @@ function main() {
     console.log(`Tier 1 (deterministic): ${s.routing.tier1.n} (${s.routing.tier1.rate}%)`);
     console.log(`Tier 2 (jury):          ${s.routing.tier2.n} (${s.routing.tier2.rate}%)`);
     console.log(`Tier 3 (expert appeal): ${s.routing.tier3.n} (${s.routing.tier3.rate}%)`);
-    console.log(`Appeal rate:            ${s.appealRate}%`);
+    const appeals = s.appeals || {
+        nEligible: s.correctness.tier2Jury.n,
+        nAppealed: s.routing.tier3.n,
+        conditionalRate: s.appealRate,
+        overallShare: s.overallAppealShare ?? s.routing.tier3.rate,
+    };
+    console.log(`Appeals:                ${appeals.nAppealed}/${appeals.nEligible} jury rulings (${appeals.conditionalRate}%)`);
+    console.log(`Appealed share overall: ${appeals.overallShare}% of all disputes`);
 
     console.log(`\n=== 2. Correctness by dispute type ===`);
     for (const [name, c] of Object.entries(s.correctness.byType)) {
@@ -33,6 +40,7 @@ function main() {
     console.log(`Tier 1: ${s.gasByTier["1"].meanTotalGas} gas (n=${s.gasByTier["1"].n})`);
     console.log(`Tier 2: ${s.gasByTier["2"].meanTotalGas} gas (n=${s.gasByTier["2"].n})`);
     console.log(`Tier 3: ${s.gasByTier["3"].meanTotalGas} gas (n=${s.gasByTier["3"].n})`);
+    if (s.gasAccounting) console.log(`Boundary: ${s.gasAccounting.note}`);
 
     console.log(`\n=== 4. Configured windows (NOT measured latency) ===`);
     console.log(`Tier 1: ${s.configuredWindows.tier1Minutes} min | Tier 2: ${s.configuredWindows.tier2Minutes} min | Tier 3: ${s.configuredWindows.tier3Minutes} min`);
